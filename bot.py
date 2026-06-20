@@ -2,14 +2,29 @@
 import random
 import re
 from pathlib import Path
+from dotenv import load_dotenv
+import argparse
 from telegram import Update
 from telegram.error import NetworkError
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, ApplicationHandlerStop
 from telegram.ext import MessageHandler, filters
 import joblib
 import database
-# Keep the token out of source control. Set TELEGRAM_BOT_TOKEN in your shell.
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+# Load environment from a .env file if present, and allow overriding via CLI.
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+parser = argparse.ArgumentParser(
+    description="Telegram bot runner. Use --token or set TELEGRAM_BOT_TOKEN in .env or environment.",
+    add_help=False,
+)
+parser.add_argument("--token", "-t", help="Telegram bot token")
+parser.add_argument("--help", "-h", action="help", help="Show this help message and exit")
+args, _ = parser.parse_known_args()
+raw_token = args.token or os.environ.get("TELEGRAM_BOT_TOKEN")
+TOKEN = raw_token.strip() if raw_token else None
+if TOKEN in {"your-telegram-bot-token-here", "your_bot_token_here", "YOUR_TOKEN"}:
+    TOKEN = None
+TOKEN_SOURCE = "CLI" if args.token else ("ENV/.env" if raw_token else None)
 
 WELCOME_TEXT = (
     "Hello, group! I'm here to share positive quotes and respond to simple greetings.\n"
@@ -43,8 +58,10 @@ GREETING_RESPONSES = [
 ADMIN_STATUSES = {"administrator", "creator"}
 SPAM_MODEL_PATH = Path("models/spam_message_model.joblib")
 TOXIC_MODEL_PATH = Path("models/toxic_message_model.joblib")
-SPAM_THRESHOLD = float(os.environ.get("SPAM_THRESHOLD", "0.85"))
-TOXIC_THRESHOLD = float(os.environ.get("TOXIC_THRESHOLD", "0.85"))
+# Set to 0.0 to use the threshold found during model training (recommended).
+# Or set to a value like 0.5-0.95 to override with a fixed threshold.
+SPAM_THRESHOLD = float(os.environ.get("SPAM_THRESHOLD", "0.0"))
+TOXIC_THRESHOLD = float(os.environ.get("TOXIC_THRESHOLD", "0.0"))
 SPAM_MODEL = None
 TOXIC_MODEL = None
 SAFE_SHORT_MESSAGES = {
@@ -59,6 +76,79 @@ SAFE_SHORT_MESSAGES = {
     "hi",
     "thank you",
     "thanks",
+    "who come be this one",
+    "who come be this one?",
+    "who come be this",
+    "who be this one",
+    "who this one be",
+    "how far",
+    "how far everyone",
+    "how you dey",
+    "how you dey?",
+    "how you dey do",
+    "how body",
+    "how your day",
+    "how your day dey",
+    "how your day dey go",
+    "how your day going",
+    "how your day dey go?",
+    "how your day dey?",
+    "i dey",
+    "i dey fine",
+    "i dey o",
+    "i dey ooo",
+    "no wahala",
+    "no wahala o",
+    "my brother",
+    "my guy",
+    "my sister",
+    "abeg",
+    "abeg o",
+    "bros",
+    "bros how far",
+    "sis",
+    "soji",
+    "welcome o",
+    "welcome ooo",
+    "na you",
+    "na so",
+    "na wa o",
+    "chai",
+    "lol",
+    "lmao",
+    "smh",
+    "ok o",
+    "ok ooo",
+    "ok na",
+    "alright",
+    "okay",
+    "fine",
+    "fine o",
+    "yes o",
+    "no o",
+    "see you",
+    "see you later",
+    "take care",
+    "have a nice day",
+    "have a good one",
+    "bless you",
+    "take care o",
+    "come go",
+    "make we go",
+    "let's go",
+    "make we move",
+    "i come",
+    "i don come",
+    "i don come o",
+    "who send you",
+    "who send you?",
+    "wetin",
+    "wetin dey",
+    "wetin dey happen",
+    "wetin dey sup",
+    "wetin dey happen?",
+    "wetin sup",
+    "wetin dey sup?",
 }
 
 def get_stats(context: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -158,17 +248,53 @@ def artifact_threshold(artifact, env_threshold: float) -> float:
 
     return 0.5
 
+# Spammy words that should not appear in messages bypassing the model
+_SPAMMY_WORDS = {
+    "buy", "sell", "cheap", "price", "offer", "deal", "discount",
+    "promotion", "limited", "urgent", "cash", "money", "free",
+    "win", "winner", "won", "prize", "claim", "click", "link",
+    "subscribe", "follow", "share", "invest", "bitcoin", "crypto",
+    "loan", "credit", "score", "trader", "trading", "signal",
+    "profit", "guaranteed", "earn", "income", "payment", "paid",
+}
+
+
 def normalize_message(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
+
+def _has_spammy_content(words: set) -> bool:
+    """Check if message contains obvious spam keywords."""
+    return bool(words & _SPAMMY_WORDS)
+
+
+def _has_url(text: str) -> bool:
+    """Check if message contains a URL or mention."""
+    return any(token in text for token in ("http", "www.", "t.me", "@"))
+
+
 def is_obviously_safe_message(text: str) -> bool:
     normalized = normalize_message(text)
+    words = set(normalized.split())
+
+    # Always trust exact matches from the safe-list
     if normalized in SAFE_SHORT_MESSAGES:
         return True
 
-    words = normalized.split()
-    if len(words) <= 4 and words and words[0] in {"hi", "hello", "hey"}:
-        return not any(word in normalized for word in ["http", "www", "t.me", "@"])
+    # If there's any spammy content, always check with the model
+    if _has_spammy_content(words):
+        return False
+
+    # Short casual messages without spam content are safe
+    word_count = len(words)
+    if word_count <= 4 and not _has_url(text):
+        return True
+
+    # Pidgin / casual conversational patterns
+    pidgin_markers = {"dey", "na", "abeg", "wetin", "o", "ooo", "bros", "how far", "wahala"}
+    if word_count <= 6 and not _has_url(text):
+        if any(marker in words for marker in pidgin_markers):
+            return True
 
     return False
 
@@ -204,6 +330,9 @@ def classify_message(text: str) -> dict[str, tuple[float, float]]:
         threshold = artifact_threshold(spam_artifact, SPAM_THRESHOLD)
         if score >= threshold:
             labels["spam"] = (score, threshold)
+        elif score >= 0.3:
+            # Log near-misses so we can tune the threshold
+            print(f"    [DEBUG] Near-miss spam: score={score:.4f}, threshold={threshold:.4f}, text={text!r}")
 
     toxic_artifact = load_toxic_model()
     if toxic_artifact and text.strip():
@@ -375,10 +504,25 @@ async def show_messages(update, context):
 async def post_init(app):
     bot = await app.bot.get_me()
     print(f"Connected as @{bot.username} (id: {bot.id})")
+    # Preload ML models at startup so the first message isn't delayed
+    print("Preloading spam model...")
+    load_spam_model()
+    print("Preloading toxic model...")
+    load_toxic_model()
+    print("Models loaded. Bot is ready.")
 
 # Main function
 def main():
     if not TOKEN:
+        print("ERROR: No Telegram bot token was provided.")
+        if TOKEN_SOURCE:
+            print(f"Token source detected: {TOKEN_SOURCE}")
+            print("But the value is a placeholder or invalid token string.")
+        print("Use one of these options:")
+        print("  1) python bot.py --token YOUR_TOKEN")
+        print(f"  2) edit {BASE_DIR / '.env'} and set TELEGRAM_BOT_TOKEN=YOUR_TOKEN")
+        print()
+        parser.print_help()
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN before starting the bot.")
 
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
@@ -397,7 +541,8 @@ def main():
     app.add_handler(MessageHandler(filters.ALL, log_message), group=2)
     app.add_error_handler(handle_error)
     print("Bot is running...")
-    app.run_polling()
+    # Avoid Windows platform signal detection issues when running in some environments.
+    app.run_polling(stop_signals=())
 
 if __name__ == "__main__":
     main()

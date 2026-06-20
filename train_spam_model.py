@@ -75,15 +75,17 @@ def train() -> None:
                     ngram_range=(1, 2),
                     min_df=2,
                     max_features=200_000,
+                    sublinear_tf=True,
                 ),
             ),
             (
                 "classifier",
                 LogisticRegression(
-                    class_weight="balanced",
+                    class_weight=None,
                     max_iter=1_000,
                     solver="liblinear",
                     random_state=RANDOM_STATE,
+                    C=0.5,
                 ),
             ),
         ]
