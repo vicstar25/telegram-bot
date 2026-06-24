@@ -9,5 +9,4 @@ message.db
 *.sqlite
 *.sqlite3
 
-models/*.joblib
 Data/
