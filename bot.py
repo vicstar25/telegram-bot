@@ -537,13 +537,12 @@ async def post_init(app):
     bot = await app.bot.get_me()
     print(f"Connected as @{bot.username} (id: {bot.id})")
 
-    # Delete any existing webhook and drop pending updates
-    # This also kills any stale getUpdates polling sessions from previous instances
+    # Drop any pending updates to clear stale polling state
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
-        print("Cleared stale bot sessions (delete_webhook).")
+        print("Cleared pending updates.")
     except Exception as e:
-        print(f"Session cleanup (non-critical): {e}")
+        print(f"Drop pending updates: {e}")
 
     # Preload ML models at startup so the first message isn't delayed
     print("Preloading spam model...")
