@@ -473,6 +473,13 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
         print("Check your internet connection, DNS, VPN/proxy, or firewall, then restart the bot.")
         return
 
+    # Handle "conflict" errors (another instance is running)
+    error_text = str(error).lower()
+    if "conflict" in error_text or "terminated by other getupdates" in error_text:
+        print(f"⚠️  Conflict error (another bot instance is running): {error}")
+        print("   The bot will keep retrying until the old session times out (~30s).")
+        return
+
     print(f"Bot error: {error}")
 
 async def handle_message(update, context):
@@ -504,6 +511,16 @@ async def show_messages(update, context):
 async def post_init(app):
     bot = await app.bot.get_me()
     print(f"Connected as @{bot.username} (id: {bot.id})")
+
+    # Close any stale polling sessions from previous instances
+    # This prevents "Conflict: terminated by other getUpdates request" errors
+    try:
+        await app.bot.close()
+        await app.bot.initialize()
+        print("Cleared old polling sessions.")
+    except Exception as e:
+        print(f"Session cleanup (non-critical): {e}")
+
     # Preload ML models at startup so the first message isn't delayed
     print("Preloading spam model...")
     load_spam_model()
