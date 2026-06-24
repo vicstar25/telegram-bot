@@ -42,6 +42,8 @@ HELP_TEXT = (
     "/quote - Receive a motivational quote\n"
     "/warn - Warn a user (admin only, reply to a message)\n"
     "/stats - Show moderation stats (admin only)\n"
+    "/status - Show model loading status\n"
+    "/messages - Show saved messages\n"
     "I only reply to simple group-friendly messages."
 )
 
@@ -59,8 +61,8 @@ GREETING_RESPONSES = [
 ]
 
 ADMIN_STATUSES = {"administrator", "creator"}
-SPAM_MODEL_PATH = Path("models/spam_message_model.joblib")
-TOXIC_MODEL_PATH = Path("models/toxic_message_model.joblib")
+SPAM_MODEL_PATH = BASE_DIR / "models" / "spam_message_model.joblib"
+TOXIC_MODEL_PATH = BASE_DIR / "models" / "toxic_message_model.joblib"
 # Set to 0.0 to use the threshold found during model training (recommended).
 # Or set to a value like 0.5-0.95 to override with a fixed threshold.
 SPAM_THRESHOLD = float(os.environ.get("SPAM_THRESHOLD", "0.0"))
@@ -398,6 +400,25 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Manual warnings: {current_stats['manual_warnings']}"
     )
 
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Diagnostic command to check if models are loaded."""
+    spam_file = SPAM_MODEL_PATH.exists()
+    toxic_file = TOXIC_MODEL_PATH.exists()
+    spam_loaded = SPAM_MODEL is not None
+    toxic_loaded = TOXIC_MODEL is not None
+    msg = (
+        "🤖 **Bot Status**\n\n"
+        f"**Spam model:**\n"
+        f"  File exists: {'✅' if spam_file else '❌'}\n"
+        f"  Loaded: {'✅' if spam_loaded else '❌'}\n"
+        f"  Threshold: {SPAM_THRESHOLD}\n\n"
+        f"**Toxic model:**\n"
+        f"  File exists: {'✅' if toxic_file else '❌'}\n"
+        f"  Loaded: {'✅' if toxic_loaded else '❌'}\n"
+        f"  Threshold: {TOXIC_THRESHOLD}\n"
+    )
+    await update.message.reply_text(msg)
+
 def get_bot_response(user_text: str) -> str:
     text = (user_text or "").strip().lower()
 
@@ -566,6 +587,8 @@ def main():
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("warn", warn))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("messages", show_messages))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, moderate_message), group=0)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message), group=1)
