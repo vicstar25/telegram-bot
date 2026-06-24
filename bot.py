@@ -1,6 +1,9 @@
 ﻿import os
 import random
 import re
+import time
+import json
+import urllib.request
 from pathlib import Path
 from dotenv import load_dotenv
 import argparse
@@ -476,8 +479,9 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     # Handle "conflict" errors (another instance is running)
     error_text = str(error).lower()
     if "conflict" in error_text or "terminated by other getupdates" in error_text:
-        print(f"⚠️  Conflict error (another bot instance is running): {error}")
-        print("   The bot will keep retrying until the old session times out (~30s).")
+        print(f"⚠️  Conflict: {error}")
+        print("   ⏳ Old session will expire within ~30 seconds. Bot will auto-reconnect.")
+        print("   💡 You can also restart the Railway project to speed this up.")
         return
 
     print(f"Bot error: {error}")
@@ -512,15 +516,6 @@ async def post_init(app):
     bot = await app.bot.get_me()
     print(f"Connected as @{bot.username} (id: {bot.id})")
 
-    # Close any stale polling sessions from previous instances
-    # This prevents "Conflict: terminated by other getUpdates request" errors
-    try:
-        await app.bot.close()
-        await app.bot.initialize()
-        print("Cleared old polling sessions.")
-    except Exception as e:
-        print(f"Session cleanup (non-critical): {e}")
-
     # Preload ML models at startup so the first message isn't delayed
     print("Preloading spam model...")
     load_spam_model()
@@ -529,6 +524,21 @@ async def post_init(app):
     print("Models loaded. Bot is ready.")
 
 # Main function
+def close_old_bot_session():
+    """Call Telegram API directly to close any stale polling sessions."""
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/close"
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            if result.get("ok"):
+                print("Closed stale bot session via API.")
+            else:
+                print(f"Telegram close API: {result.get('description', 'unknown')}")
+    except Exception as e:
+        # This often fails with "logged out" on first call, which is fine
+        print(f"Session cleanup note: {e}")
+
 def main():
     if not TOKEN:
         print("ERROR: No Telegram bot token was provided.")
@@ -541,6 +551,11 @@ def main():
         print()
         parser.print_help()
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN before starting the bot.")
+
+    # Force-close any stale polling sessions BEFORE connecting
+    print("Checking for stale bot sessions...")
+    close_old_bot_session()
+    time.sleep(1)
 
     app = ApplicationBuilder().token(TOKEN).post_init(post_init).build()
 
