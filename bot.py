@@ -1,4 +1,4 @@
-﻿import os
+import os
 import random
 import re
 from pathlib import Path
@@ -20,11 +20,11 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--token", "-t", help="Telegram bot token")
 parser.add_argument("--help", "-h", action="help", help="Show this help message and exit")
 args, _ = parser.parse_known_args()
-raw_token = args.token or os.environ.get("TELEGRAM_BOT_TOKEN")
+raw_token = args.token or os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT-TOKEN")
 TOKEN = raw_token.strip() if raw_token else None
 if TOKEN in {"your-telegram-bot-token-here", "your_bot_token_here", "YOUR_TOKEN"}:
     TOKEN = None
-TOKEN_SOURCE = "CLI" if args.token else ("ENV/.env" if raw_token else None)
+TOKEN_SOURCE = "CLI" if args.token else (("ENV/.env (TELEGRAM_BOT_TOKEN)" if os.environ.get("TELEGRAM_BOT_TOKEN") else "ENV/.env (BOT-TOKEN)") if raw_token else None)
 
 WELCOME_TEXT = (
     "Hello, group! I'm here to share positive quotes and respond to simple greetings.\n"
@@ -546,3 +546,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
