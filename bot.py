@@ -500,9 +500,9 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     # Handle "conflict" errors (another instance is running)
     error_text = str(error).lower()
     if "conflict" in error_text or "terminated by other getupdates" in error_text:
-        print(f"⚠️  Conflict: {error}")
-        print("   ⏳ Old session will expire within ~30 seconds. Bot will auto-reconnect.")
-        print("   💡 You can also restart the Railway project to speed this up.")
+        print(f"⚠️  Conflict detected. Attempting to close stale session...")
+        close_old_bot_session()
+        print("   ⏳ Bot will retry automatically.")
         return
 
     print(f"Bot error: {error}")
@@ -537,6 +537,14 @@ async def post_init(app):
     bot = await app.bot.get_me()
     print(f"Connected as @{bot.username} (id: {bot.id})")
 
+    # Delete any existing webhook and drop pending updates
+    # This also kills any stale getUpdates polling sessions from previous instances
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("Cleared stale bot sessions (delete_webhook).")
+    except Exception as e:
+        print(f"Session cleanup (non-critical): {e}")
+
     # Preload ML models at startup so the first message isn't delayed
     print("Preloading spam model...")
     load_spam_model()
@@ -546,19 +554,19 @@ async def post_init(app):
 
 # Main function
 def close_old_bot_session():
-    """Call Telegram API directly to close any stale polling sessions."""
+    """Call Telegram API to close any stale getUpdates sessions from old instances."""
     try:
+        # close() tells Telegram's server to terminate the current getUpdates session
         url = f"https://api.telegram.org/bot{TOKEN}/close"
         req = urllib.request.Request(url, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             result = json.loads(resp.read())
             if result.get("ok"):
-                print("Closed stale bot session via API.")
+                print("Closed stale getUpdates session.")
             else:
-                print(f"Telegram close API: {result.get('description', 'unknown')}")
+                print(f"Telegram /close: {result.get('description', 'unknown')}")
     except Exception as e:
-        # This often fails with "logged out" on first call, which is fine
-        print(f"Session cleanup note: {e}")
+        print(f"Session cleanup: {e}")
 
 def main():
     if not TOKEN:
